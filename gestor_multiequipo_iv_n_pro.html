@@ -1,0 +1,1341 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Iván PRO - Gestor Multiequipo</title>
+  
+  <!-- Tailwind CSS para el diseño estético -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- React y ReactDOM (Versión de Producción Estable) -->
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+  
+  <!-- Babel para compilar JSX en caliente de forma local -->
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Dependencias para Gráficos Recharts en HTML -->
+  <script src="https://unpkg.com/prop-types@15.8.1/prop-types.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/recharts@2.12.7/umd/Recharts.js"></script>
+
+  <!-- Librerías de Firebase en modo de compatibilidad global (SDK Compat para soporte offline nativo) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+  <style>
+    body {
+      background-color: #f9fafb;
+    }
+    .animate-spin-slow {
+      animation: spin 8s linear infinite;
+    }
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Contenedor principal para React -->
+  <div id="root"></div>
+
+  <!-- Usamos babel plano sin "module" para evitar bloqueos del navegador en local -->
+  <script type="text/babel">
+    const { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, PieChart, Pie, Cell, AreaChart, Area } = window.Recharts;
+    const { useState, useEffect, useMemo, useRef } = React;
+
+    const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884d8', '#82ca9d', '#ffc658', '#8dd1e1'];
+
+    const initialIntervals = {
+      t1: 0, t2: 0, t3: 0, t4: 0, t5: 0, t6: 0
+    };
+
+    const initialStats = {
+      combinativeRight: 0,
+      combinativeLeft: 0,
+      combinativeCenterRight: 0,
+      combinativeCenterLeft: 0,
+      combinativeCenterCross: 0,
+      directAttack: 0,
+      counterAttack: 0,
+      abpPenal: 0,
+      abpTiroLibreDirecto: 0,
+      abpPrimerPalo: 0,
+      abpSegundoPalo: 0
+    };
+
+    // ==========================================
+    // ⚙️ CREDENCIALES FIJAS DE TU PROYECTO FIREBASE (¡Sincronización Automática!)
+    // ==========================================
+    let firebaseConfig = {
+      apiKey: "AIzaSyB8P3KCyvFE77QgdIZenl8S7La6fD9qzFk",
+      authDomain: "gestor-de-equipo-7f81c.firebaseapp.com",
+      projectId: "gestor-de-equipo-7f81c",
+      storageBucket: "gestor-de-equipo-7f81c.firebasestorage.app",
+      messagingSenderId: "480722361644",
+      appId: "1:480722361644:web:438403435eba45fd312089",
+      measurementId: "G-3C9LTBL6P9"
+    };
+
+    // Auto-detección del entorno del chat para inyectar credenciales automáticamente en la previsualización de Gemini
+    if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+      firebaseConfig = typeof __firebase_config === 'string' ? JSON.parse(__firebase_config) : __firebase_config;
+    }
+
+    let dbInstance = null;
+    let authInstance = null;
+    let appId = 'ivan-pro-manager';
+    let initialAuthToken = null;
+    let isFirebaseConfigured = true; // Forzado a true para usar siempre tu nube
+
+    if (typeof __app_id !== 'undefined' && __app_id) {
+      appId = __app_id;
+    }
+    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+      initialAuthToken = __initial_auth_token;
+    }
+
+    // Inicialización directa de Firebase
+    try {
+      if (!firebase.apps.length) {
+        firebase.initializeApp(firebaseConfig);
+      }
+      authInstance = firebase.auth();
+      dbInstance = firebase.firestore();
+
+      // Persistencia offline de datos automática para guardar sin conexión en la cancha
+      dbInstance.enablePersistence({ synchronizeTabs: true })
+        .catch((err) => console.warn("Soporte offline cargado en caliente."));
+    } catch (err) {
+      console.error("Falla en la inicialización de Firebase:", err);
+    }
+
+    const Icons = {
+      Plus: () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" /></svg>,
+      Calendar: () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" /></svg>,
+      Trash2: () => <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M14.74 9l-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 01-2.244 2.077H8.084a2.25 2.25 0 01-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 00-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 013.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 00-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 00-7.5 0" /></svg>,
+      TrendingUp: () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M2.25 18L9 11.25l4.306 4.307a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941" /></svg>,
+      ShieldAlert: () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 9v3.75m0-10.036A11.959 11.959 0 013.598 6 11.99 11.99 0 003 9.75c0 5.592 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.57-.598-3.75h-.152c-3.196 0-6.1-1.249-8.25-3.286zm0 13.036h.008v.008H12v-.008z" /></svg>,
+      Target: () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M12 3v18m9-9H3m15 0a6 6 0 11-12 0 6 6 0 0112 0z" /></svg>,
+      Save: () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 3.75V16.5L12 14.25 7.5 16.5V3.75m9 0H18A2.25 2.25 0 0120.25 6v12A2.25 2.25 0 0118 20.25H6A2.25 2.25 0 013.75 18V6A2.25 2.25 0 016 3.75h1.5m9 0h-9" /></svg>,
+      Settings: ({ className }) => <svg className={`w-5 h-5 ${className}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.324.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 011.37.49l1.296 2.247a1.125 1.125 0 01-.26 1.43l-1.003.828c-.293.241-.438.613-.43.992a7.723 7.723 0 010 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.954.26 1.43l-1.298 2.247a1.125 1.125 0 01-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.57 6.57 0 01-.22.128c-.331.183-.581.495-.644.869l-.213 1.28c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.02-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 01-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 01-1.369-.49l-1.297-2.247a1.125 1.125 0 01.26-1.43l1.004-.827c.292-.24.437-.613.43-.992a6.932 6.932 0 010-.255c.007-.378-.138-.75-.43-.991l-1.004-.827a1.125 1.125 0 01-.26-1.43l1.297-2.247a1.125 1.125 0 011.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.087.22-.128.332-.183.582-.495.644-.869l.214-1.28z" /><circle cx="12" cy="12" r="3" strokeLinecap="round" strokeLinejoin="round" /></svg>,
+      Users: () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M15 19.128a9.38 9.38 0 002.625.372 9.337 9.337 0 004.121-.952 4.125 4.125 0 00-7.533-2.493M15 19.128v-.003c0-1.113-.285-2.16-.786-3.07M15 19.128v.109A11.386 11.386 0 0112.001 21c-2.21 0-4.26-.63-6.002-1.724v-.109m0 .109A11.356 11.356 0 013 16.5c0-1.9 1.12-3.53 2.724-4.262m0 0A4.6 4.6 0 004.625 10.5c0 1.25.5 2.388 1.3 3.2M12 12.75a5.25 5.25 0 110-10.5 5.25 5.25 0 010 10.5z" /></svg>,
+      Trophy: () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 18.75h-9m9 0a3 3 0 013 3h-15a3 3 0 013-3m9 0v-3.375c0-.621-.503-1.125-1.125-1.125h-6.75a1.125 1.125 0 01-1.125-1.125V18.75m9 0h-9M12 3v1.5M12 18.75V15" /></svg>,
+      ChevronDown: ({ className }) => <svg className={`w-4 h-4 ${className}`} fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2.5"><path strokeLinecap="round" strokeLinejoin="round" d="M19.5 8.25l-7.5 7.5-7.5-7.5" /></svg>,
+      Award: () => <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M16.5 10.5V6.75a4.5 4.5 0 10-9 0v3.75m-.75 11.25h10.5a2.25 2.25 0 002.25-2.25v-6.75a2.25 2.25 0 00-2.25-2.25H6a2.25 2.25 0 00-2.25 2.25v6.75a2.25 2.25 0 002.25 2.25z" /></svg>,
+      Sparkles: () => <svg className="w-4 h-4 text-yellow-500 inline mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9.813 15.904L9 21l-.813-5.096L3 15l5.187-.813L9 9l.813 5.187L15 15l-5.187.813zM19.071 4.929l-.707 1.414-1.414.707 1.414.707.707 1.414.707-1.414 1.414-.707-1.414-.707-.707-1.414z" /></svg>,
+      Map: () => <svg className="w-6 h-6 text-blue-900" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 6.75V15m6-4.25V18m-9-3.75h.008v.008H6v-.008zm12-4.25h.008v.008H18v-.008zm-6-2.5h.008v.008H12V7.25zm0 11.5h.008v.008H12v-.008z" /></svg>,
+      ShieldCheck: () => <svg className="w-4 h-4 text-blue-500 inline mr-1" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M9 12.75L11.25 15 15 9.75M21 12c0 1.268-.63 2.39-1.593 3.068a3.745 3.745 0 01-1.043 3.296 3.745 3.745 0 01-3.296 1.043A3.745 3.745 0 0112 21c-1.268 0-2.39-.63-3.068-1.593a3.746 3.746 0 01-3.296-1.043 3.745 3.745 0 01-1.043-3.296a3.745 3.745 0 0121 12z" /></svg>,
+      Loader: () => (
+        <svg className="animate-spin h-10 w-10 text-blue-900 mx-auto" fill="none" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+        </svg>
+      )
+    };
+
+    const SafeResponsiveContainer = ({ children, height = 300 }) => {
+      const containerRef = useRef(null);
+      const [size, setSize] = useState({ width: 0, height });
+
+      useEffect(() => {
+        if (!containerRef.current) return;
+
+        const resizeObserver = new ResizeObserver((entries) => {
+          if (!entries || !entries[0]) return;
+          const rect = entries[0].contentRect;
+          if (rect.width > 0) {
+            setSize({
+              width: Math.floor(rect.width),
+              height: rect.height > 0 ? Math.floor(rect.height) : height
+            });
+          }
+        });
+
+        resizeObserver.observe(containerRef.current);
+        return () => resizeObserver.disconnect();
+      }, [height]);
+
+      return (
+        <div ref={containerRef} className="w-full relative" style={{ height }}>
+          {size.width > 0 && React.cloneElement(children, { width: size.width, height: size.height })}
+        </div>
+      );
+    };
+
+    const App = () => {
+      const [activeTab, setActiveTab] = useState('stats');
+      const [user, setUser] = useState(null);
+      const [loading, setLoading] = useState(true);
+      const [onlineStatus, setOnlineStatus] = useState(navigator.onLine);
+      const [isUsingNube, setIsUsingNube] = useState(true); // Forzado a true por defecto como solicitaste
+      
+      const [teams, setTeams] = useState([]);
+      const [seasons, setSeasons] = useState([]);
+      const [selectedTeamId, setSelectedTeamId] = useState('');
+      const [selectedSeasonId, setSelectedSeasonId] = useState('');
+      const [matches, setMatches] = useState([]);
+
+      const [showConfig, setShowConfig] = useState(false);
+      const [newTeamName, setNewTeamName] = useState('');
+      const [newSeasonName, setNewSeasonName] = useState('');
+      
+      const [tacticalView, setTacticalView] = useState('offensive');
+
+      const [newMatch, setNewMatch] = useState({
+        date: '', time: '', place: '', opponent: '', location: 'Local', ourGoals: 0, opponentGoals: 0,
+        offensive: { ...initialStats },
+        defensive: { ...initialStats },
+        intervalsOffensive: { ...initialIntervals },
+        intervalsDefensive: { ...initialIntervals }
+      });
+
+      useEffect(() => {
+        const handleOnline = () => setOnlineStatus(true);
+        const handleOffline = () => setOnlineStatus(false);
+        window.addEventListener('online', handleOnline);
+        window.addEventListener('offline', handleOffline);
+        return () => {
+          window.removeEventListener('online', handleOnline);
+          window.removeEventListener('offline', handleOffline);
+        };
+      }, []);
+
+      // Autenticación fluida sin demoras (si Firebase no responde en 2 segundos, levanta modo local de emergencia)
+      useEffect(() => {
+        if (!isUsingNube) {
+          setUser({ uid: 'local_user', displayName: 'Iván' });
+          setLoading(false);
+          return;
+        }
+
+        const safetyTimeout = setTimeout(() => {
+          if (loading) {
+            setUser({ uid: 'local_user', displayName: 'Iván' });
+            setLoading(false);
+          }
+        }, 2000);
+
+        const initAuth = async () => {
+          try {
+            if (initialAuthToken) {
+              await authInstance.signInWithCustomToken(initialAuthToken);
+            } else {
+              await authInstance.signInAnonymously();
+            }
+          } catch (error) { 
+            console.error("Auth error:", error); 
+            setUser({ uid: 'local_user', displayName: 'Iván' });
+            setLoading(false);
+          }
+        };
+        initAuth();
+
+        const unsubscribe = authInstance.onAuthStateChanged((currentUser) => {
+          clearTimeout(safetyTimeout);
+          if (currentUser) {
+            setUser(currentUser);
+          } else {
+            setUser({ uid: 'local_user', displayName: 'Iván' });
+          }
+          setLoading(false);
+        });
+
+        return () => {
+          clearTimeout(safetyTimeout);
+          unsubscribe();
+        };
+      }, [isUsingNube]);
+
+      // Carga de Equipos
+      useEffect(() => {
+        if (!user) return;
+
+        if (isUsingNube && dbInstance && user.uid !== 'local_user') {
+          const teamsRef = dbInstance.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('teams');
+          return teamsRef.onSnapshot((snapshot) => {
+            const teamsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+            setTeams(teamsData);
+            if (teamsData.length > 0 && !selectedTeamId) setSelectedTeamId(teamsData[0].id);
+          }, (err) => {
+            const localTeams = JSON.parse(localStorage.getItem('ivan_pro_teams') || '[]');
+            setTeams(localTeams);
+            if (localTeams.length > 0 && !selectedTeamId) setSelectedTeamId(localTeams[0].id);
+          });
+        } else {
+          const localTeams = JSON.parse(localStorage.getItem('ivan_pro_teams') || '[]');
+          setTeams(localTeams);
+          if (localTeams.length > 0 && !selectedTeamId) setSelectedTeamId(localTeams[0].id);
+        }
+      }, [user, isUsingNube]);
+
+      // Carga de Temporadas
+      useEffect(() => {
+        if (!user || !selectedTeamId) {
+          setSeasons([]);
+          return;
+        }
+
+        if (isUsingNube && dbInstance && user.uid !== 'local_user') {
+          const seasonsRef = dbInstance.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('seasons');
+          return seasonsRef.onSnapshot((snapshot) => {
+            const seasonsData = snapshot.docs
+              .map(doc => ({ id: doc.id, ...doc.data() }))
+              .filter(s => s.teamId === selectedTeamId);
+            setSeasons(seasonsData);
+            if (seasonsData.length > 0) {
+              if (!seasonsData.some(s => s.id === selectedSeasonId)) {
+                setSelectedSeasonId(seasonsData[0].id);
+              }
+            } else {
+              setSelectedSeasonId('');
+            }
+          }, (err) => {
+            const localSeasons = JSON.parse(localStorage.getItem('ivan_pro_seasons') || '[]');
+            const filtered = localSeasons.filter(s => s.teamId === selectedTeamId);
+            setSeasons(filtered);
+            if (filtered.length > 0) {
+              if (!filtered.some(s => s.id === selectedSeasonId)) {
+                setSelectedSeasonId(filtered[0].id);
+              }
+            } else {
+              setSelectedSeasonId('');
+            }
+          });
+        } else {
+          const localSeasons = JSON.parse(localStorage.getItem('ivan_pro_seasons') || '[]');
+          const filtered = localSeasons.filter(s => s.teamId === selectedTeamId);
+          setSeasons(filtered);
+          if (filtered.length > 0) {
+            if (!filtered.some(s => s.id === selectedSeasonId)) {
+              setSelectedSeasonId(filtered[0].id);
+            }
+          } else {
+            setSelectedSeasonId('');
+          }
+        }
+      }, [user, selectedTeamId, isUsingNube]);
+
+      // Carga de Partidos
+      useEffect(() => {
+        if (!user || !selectedTeamId || !selectedSeasonId) {
+          setMatches([]);
+          return;
+        }
+
+        if (isUsingNube && dbInstance && user.uid !== 'local_user') {
+          const matchesRef = dbInstance.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('matches');
+          return matchesRef.onSnapshot((snapshot) => {
+            const matchesData = snapshot.docs
+              .map(doc => ({ id: doc.id, ...doc.data() }))
+              .filter(m => m.teamId === selectedTeamId && m.seasonId === selectedSeasonId);
+            setMatches(matchesData);
+          }, (err) => {
+            const localMatches = JSON.parse(localStorage.getItem('ivan_pro_matches') || '[]');
+            const filtered = localMatches.filter(m => m.teamId === selectedTeamId && m.seasonId === selectedSeasonId);
+            setMatches(filtered);
+          });
+        } else {
+          const localMatches = JSON.parse(localStorage.getItem('ivan_pro_matches') || '[]');
+          const filtered = localMatches.filter(m => m.teamId === selectedTeamId && m.seasonId === selectedSeasonId);
+          setMatches(filtered);
+        }
+      }, [user, selectedTeamId, selectedSeasonId, isUsingNube]);
+
+      const handleMatchChange = (category, field, value) => {
+        if (category === 'main') {
+          setNewMatch(prev => ({ 
+            ...prev, 
+            [field]: (field === 'ourGoals' || field === 'opponentGoals') ? (value === '' ? '' : parseInt(value) || 0) : value 
+          }));
+        } else {
+          setNewMatch(prev => ({
+            ...prev,
+            [category]: {
+              ...prev[category],
+              [field]: value === '' ? '' : parseInt(value) || 0
+            }
+          }));
+        }
+      };
+
+      const handleIncrement = (category, field, amount) => {
+        if (category === 'main') {
+          const current = parseInt(newMatch[field]) || 0;
+          const next = Math.max(0, current + amount);
+          handleMatchChange('main', field, next);
+        } else {
+          const current = parseInt(newMatch[category][field]) || 0;
+          const next = Math.max(0, current + amount);
+          handleMatchChange(category, field, next);
+        }
+      };
+
+      const addTeam = async () => {
+        if (!newTeamName.trim()) return;
+        const activeUser = user || { uid: 'local_user' };
+        const newTeam = { name: newTeamName, createdAt: new Date().toISOString() };
+
+        try {
+          if (isUsingNube && dbInstance && activeUser.uid !== 'local_user') {
+            const teamsRef = dbInstance.collection('artifacts').doc(appId).collection('users').doc(activeUser.uid).collection('teams');
+            await teamsRef.add(newTeam);
+          } else {
+            const localTeams = JSON.parse(localStorage.getItem('ivan_pro_teams') || '[]');
+            const newTeamLocal = { id: 'team_' + Date.now(), ...newTeam };
+            localTeams.push(newTeamLocal);
+            localStorage.setItem('ivan_pro_teams', JSON.stringify(localTeams));
+            setTeams(localTeams);
+            if (!selectedTeamId) setSelectedTeamId(newTeamLocal.id);
+          }
+          setNewTeamName('');
+        } catch (e) {
+          const localTeams = JSON.parse(localStorage.getItem('ivan_pro_teams') || '[]');
+          const newTeamLocal = { id: 'team_' + Date.now(), ...newTeam };
+          localTeams.push(newTeamLocal);
+          localStorage.setItem('ivan_pro_teams', JSON.stringify(localTeams));
+          setTeams(localTeams);
+          if (!selectedTeamId) setSelectedTeamId(newTeamLocal.id);
+          setNewTeamName('');
+        }
+      };
+
+      const addSeason = async () => {
+        if (!newSeasonName.trim() || !selectedTeamId) return;
+        const activeUser = user || { uid: 'local_user' };
+        const newSeason = { name: newSeasonName, teamId: selectedTeamId, createdAt: new Date().toISOString() };
+
+        try {
+          if (isUsingNube && dbInstance && activeUser.uid !== 'local_user') {
+            const seasonsRef = dbInstance.collection('artifacts').doc(appId).collection('users').doc(activeUser.uid).collection('seasons');
+            await seasonsRef.add(newSeason);
+          } else {
+            const localSeasons = JSON.parse(localStorage.getItem('ivan_pro_seasons') || '[]');
+            const newSeasonLocal = { id: 'season_' + Date.now(), ...newSeason };
+            localSeasons.push(newSeasonLocal);
+            localStorage.setItem('ivan_pro_seasons', JSON.stringify(localSeasons));
+            
+            const filtered = localSeasons.filter(s => s.teamId === selectedTeamId);
+            setSeasons(filtered);
+            if (!selectedSeasonId) setSelectedSeasonId(newSeasonLocal.id);
+          }
+          setNewSeasonName('');
+        } catch (e) {
+          const localSeasons = JSON.parse(localStorage.getItem('ivan_pro_seasons') || '[]');
+          const newSeasonLocal = { id: 'season_' + Date.now(), ...newSeason };
+          localSeasons.push(newSeasonLocal);
+          localStorage.setItem('ivan_pro_seasons', JSON.stringify(localSeasons));
+          
+          const filtered = localSeasons.filter(s => s.teamId === selectedTeamId);
+          setSeasons(filtered);
+          if (!selectedSeasonId) setSelectedSeasonId(newSeasonLocal.id);
+          setNewSeasonName('');
+        }
+      };
+
+      const saveMatch = async () => {
+        if (!selectedTeamId || !selectedSeasonId) return;
+        if (!newMatch.date || !newMatch.opponent) return;
+        
+        const activeUser = user || { uid: 'local_user' };
+        const matchToSave = {
+          ...newMatch,
+          teamId: selectedTeamId,
+          seasonId: selectedSeasonId,
+          ourGoals: Number(newMatch.ourGoals) || 0,
+          opponentGoals: Number(newMatch.opponentGoals) || 0,
+          offensive: Object.fromEntries(Object.entries(newMatch.offensive).map(([k, v]) => [k, Number(v) || 0])),
+          defensive: Object.fromEntries(Object.entries(newMatch.defensive).map(([k, v]) => [k, Number(v) || 0])),
+          intervalsOffensive: Object.fromEntries(Object.entries(newMatch.intervalsOffensive || initialIntervals).map(([k, v]) => [k, Number(v) || 0])),
+          intervalsDefensive: Object.fromEntries(Object.entries(newMatch.intervalsDefensive || initialIntervals).map(([k, v]) => [k, Number(v) || 0])),
+          createdAt: new Date().toISOString()
+        };
+
+        try {
+          if (isUsingNube && dbInstance && activeUser.uid !== 'local_user') {
+            const matchesRef = dbInstance.collection('artifacts').doc(appId).collection('users').doc(activeUser.uid).collection('matches');
+            await matchesRef.add(matchToSave);
+          } else {
+            const localMatches = JSON.parse(localStorage.getItem('ivan_pro_matches') || '[]');
+            const newMatchLocal = { id: 'match_' + Date.now(), ...matchToSave };
+            localMatches.push(newMatchLocal);
+            localStorage.setItem('ivan_pro_matches', JSON.stringify(localMatches));
+            
+            const filtered = localMatches.filter(m => m.teamId === selectedTeamId && m.seasonId === selectedSeasonId);
+            setMatches(filtered);
+          }
+        } catch (e) {
+          const localMatches = JSON.parse(localStorage.getItem('ivan_pro_matches') || '[]');
+          const newMatchLocal = { id: 'match_' + Date.now(), ...matchToSave };
+          localMatches.push(newMatchLocal);
+          localStorage.setItem('ivan_pro_matches', JSON.stringify(localMatches));
+          
+          const filtered = localMatches.filter(m => m.teamId === selectedTeamId && m.seasonId === selectedSeasonId);
+          setMatches(filtered);
+        }
+        
+        setNewMatch({
+          date: '', time: '', place: '', opponent: '', location: 'Local', ourGoals: 0, opponentGoals: 0,
+          offensive: { ...initialStats },
+          defensive: { ...initialStats },
+          intervalsOffensive: { ...initialIntervals },
+          intervalsDefensive: { ...initialIntervals }
+        });
+      };
+
+      const deleteMatch = async (id) => {
+        const activeUser = user || { uid: 'local_user' };
+        try {
+          if (isUsingNube && dbInstance && activeUser.uid !== 'local_user') {
+            const matchDoc = dbInstance.collection('artifacts').doc(appId).collection('users').doc(activeUser.uid).collection('matches').doc(id);
+            await matchDoc.delete();
+          } else {
+            const localMatches = JSON.parse(localStorage.getItem('ivan_pro_matches') || '[]');
+            const filtered = localMatches.filter(m => m.id !== id);
+            localStorage.setItem('ivan_pro_matches', JSON.stringify(filtered));
+            setMatches(filtered.filter(m => m.teamId === selectedTeamId && m.seasonId === selectedSeasonId));
+          }
+        } catch (e) {
+          const localMatches = JSON.parse(localStorage.getItem('ivan_pro_matches') || '[]');
+          const filtered = localMatches.filter(m => m.id !== id);
+          localStorage.setItem('ivan_pro_matches', JSON.stringify(filtered));
+          setMatches(filtered.filter(m => m.teamId === selectedTeamId && m.seasonId === selectedSeasonId));
+        }
+      };
+
+      const deleteTeam = async (id) => {
+        const activeUser = user || { uid: 'local_user' };
+        try {
+          if (isUsingNube && dbInstance && activeUser.uid !== 'local_user') {
+            const teamDoc = dbInstance.collection('artifacts').doc(appId).collection('users').doc(activeUser.uid).collection('teams').doc(id);
+            await teamDoc.delete();
+          } else {
+            const localTeams = JSON.parse(localStorage.getItem('ivan_pro_teams') || '[]');
+            const filtered = localTeams.filter(t => t.id !== id);
+            localStorage.setItem('ivan_pro_teams', JSON.stringify(filtered));
+            setTeams(filtered);
+          }
+        } catch (e) {
+          const localTeams = JSON.parse(localStorage.getItem('ivan_pro_teams') || '[]');
+          const filtered = localTeams.filter(t => t.id !== id);
+          localStorage.setItem('ivan_pro_teams', JSON.stringify(filtered));
+          setTeams(filtered);
+        }
+        if (selectedTeamId === id) setSelectedTeamId('');
+      };
+
+      const deleteSeason = async (id) => {
+        const activeUser = user || { uid: 'local_user' };
+        try {
+          if (isUsingNube && dbInstance && activeUser.uid !== 'local_user') {
+            const seasonDoc = dbInstance.collection('artifacts').doc(appId).collection('users').doc(activeUser.uid).collection('seasons').doc(id);
+            await seasonDoc.delete();
+          } else {
+            const localSeasons = JSON.parse(localStorage.getItem('ivan_pro_seasons') || '[]');
+            const filtered = localSeasons.filter(s => s.id !== id);
+            localStorage.setItem('ivan_pro_seasons', JSON.stringify(filtered));
+            setSeasons(filtered.filter(s => s.teamId === selectedTeamId));
+          }
+        } catch (e) {
+          const localSeasons = JSON.parse(localStorage.getItem('ivan_pro_seasons') || '[]');
+          const filtered = localSeasons.filter(s => s.id !== id);
+          localStorage.setItem('ivan_pro_seasons', JSON.stringify(filtered));
+          setSeasons(filtered.filter(s => s.teamId === selectedTeamId));
+        }
+        if (selectedSeasonId === id) setSelectedSeasonId('');
+      };
+
+      const performanceData = useMemo(() => {
+        return [...matches]
+          .sort((a, b) => new Date(a.date) - new Date(b.date))
+          .map((m, index) => {
+            const og = Number(m.ourGoals) || 0;
+            const dg = Number(m.opponentGoals) || 0;
+            let resultado = 'Empate';
+            let codigoRes = 'E';
+            if (og > dg) {
+              resultado = 'Victoria';
+              codigoRes = 'G';
+            } else if (og < dg) {
+              resultado = 'Derrota';
+              codigoRes = 'P';
+            }
+            return {
+              name: `PJ ${index + 1}`,
+              fullDate: m.date,
+              opponent: m.opponent,
+              goles: og,
+              recibidos: dg,
+              resultado: resultado,
+              codigoRes: codigoRes
+            };
+          });
+      }, [matches]);
+
+      const collectiveKPIs = useMemo(() => {
+        const totalMatches = matches.length;
+        if (totalMatches === 0) {
+          return {
+            totalGoalsScored: 0, totalGoalsConceded: 0, cleanSheets: 0, cleanSheetsPct: '0%', undefeatedStreak: 0
+          };
+        }
+
+        let totalScored = 0, totalConceded = 0, cleanSheets = 0, currentUndefeated = 0, maxUndefeated = 0;
+        const sorted = [...matches].sort((a, b) => new Date(a.date) - new Date(b.date));
+
+        sorted.forEach(m => {
+          const og = Number(m.ourGoals) || 0;
+          const dg = Number(m.opponentGoals) || 0;
+          totalScored += og;
+          totalConceded += dg;
+          if (dg === 0) cleanSheets++;
+
+          if (og >= dg) {
+            currentUndefeated++;
+            if (currentUndefeated > maxUndefeated) maxUndefeated = currentUndefeated;
+          } else {
+            currentUndefeated = 0;
+          }
+        });
+
+        return {
+          totalGoalsScored: totalScored,
+          totalGoalsConceded: totalConceded,
+          cleanSheets,
+          cleanSheetsPct: `${Math.round((cleanSheets / totalMatches) * 100)}%`,
+          undefeatedStreak: currentUndefeated
+        };
+      }, [matches]);
+
+      const locationAnalysis = useMemo(() => {
+        const baseObj = { matches: 0, wins: 0, draws: 0, losses: 0, goalsFor: 0, goalsAgainst: 0 };
+        const analysis = { Local: { ...baseObj }, Visitante: { ...baseObj } };
+
+        matches.forEach(m => {
+          const loc = m.location === 'Visitante' ? 'Visitante' : 'Local';
+          const og = Number(m.ourGoals) || 0;
+          const dg = Number(m.opponentGoals) || 0;
+
+          analysis[loc].matches++;
+          analysis[loc].goalsFor += og;
+          analysis[loc].goalsAgainst += dg;
+
+          if (og > dg) analysis[loc].wins++;
+          else if (og === dg) analysis[loc].draws++;
+          else analysis[loc].losses++;
+        });
+
+        return analysis;
+      }, [matches]);
+
+      const intervalTotals = useMemo(() => {
+        const totals = {
+          t1: { favor: 0, contra: 0 }, t2: { favor: 0, contra: 0 }, t3: { favor: 0, contra: 0 },
+          t4: { favor: 0, contra: 0 }, t5: { favor: 0, contra: 0 }, t6: { favor: 0, contra: 0 }
+        };
+
+        matches.forEach(m => {
+          const off = m.intervalsOffensive || {};
+          const deff = m.intervalsDefensive || {};
+          Object.keys(totals).forEach(key => {
+            totals[key].favor += Number(off[key]) || 0;
+            totals[key].contra += Number(deff[key]) || 0;
+          });
+        });
+
+        return [
+          { name: "1'-15'", favor: totals.t1.favor, contra: totals.t1.contra },
+          { name: "16'-30'", favor: totals.t2.favor, contra: totals.t2.contra },
+          { name: "31'-45'", favor: totals.t3.favor, contra: totals.t3.contra },
+          { name: "46'-60'", favor: totals.t4.favor, contra: totals.t4.contra },
+          { name: "61'-75'", favor: totals.t5.favor, contra: totals.t5.contra },
+          { name: "76'-90+'", favor: totals.t6.favor, contra: totals.t6.contra }
+        ];
+      }, [matches]);
+
+      const calculateTotals = (type) => {
+        const totals = { 
+          'Combinación por derecha': 0, 'Combinación por izquierda': 0, 'Centro Der.': 0, 'Centro Izq.': 0, 
+          'Combinación por carril central': 0, 'Ataque Directo': 0, 'Contraataque': 0, 'ABP Penal': 0,
+          'ABP Tiro Libre Directo': 0, 'ABP al Primer Palo': 0, 'ABP al Segundo Palo': 0
+        };
+        
+        matches.forEach(m => {
+          const data = m[type] || {};
+          totals['Combinación por derecha'] += Number(data.combinativeRight) || 0;
+          totals['Combinación por izquierda'] += Number(data.combinativeLeft) || 0;
+          totals['Centro Der.'] += Number(data.combinativeCenterRight) || 0;
+          totals['Centro Izq.'] += Number(data.combinativeCenterLeft) || 0;
+          totals['Combinación por carril central'] += Number(data.combinativeCenterCross) || 0;
+          totals['Ataque Directo'] += Number(data.directAttack) || 0;
+          totals['Contraataque'] += Number(data.counterAttack) || 0;
+          totals['ABP Penal'] += Number(data.abpPenal) || 0;
+          totals['ABP Tiro Libre Directo'] += Number(data.abpTiroLibreDirecto) || 0;
+          totals['ABP al Primer Palo'] += Number(data.abpPrimerPalo) || 0;
+          totals['ABP al Segundo Palo'] += Number(data.abpSegundoPalo) || 0;
+        });
+        
+        return Object.keys(totals).map(name => ({ name, value: totals[name] }));
+      };
+
+      const offensiveTotals = useMemo(() => calculateTotals('offensive'), [matches]);
+      const defensiveTotals = useMemo(() => calculateTotals('defensive'), [matches]);
+
+      if (loading) return <div className="min-h-screen flex items-center justify-center bg-gray-100"><Icons.Loader /></div>;
+
+      return (
+        <div className="min-h-screen bg-gray-50 font-sans pb-12 text-gray-800 flex flex-col relative overflow-x-hidden">
+          
+          {/* CABECERA INTEGRADA SUPERIOR CON MARGEN PARA EVITAR BLOQUEO DE CLICS */}
+          <header className="bg-blue-950 text-white shadow-xl w-full px-6 pt-14 pb-5 flex flex-col lg:flex-row lg:items-center lg:justify-between gap-5 z-[80] border-b border-blue-900 relative pointer-events-auto">
+            <div className="flex flex-wrap items-center gap-3">
+              <h1 className="text-xl font-black tracking-tighter uppercase select-none">
+                Iván <span className="text-blue-400">PRO</span>
+              </h1>
+              
+              <span className={`text-[10px] px-2.5 py-1 rounded-full font-black uppercase tracking-wider ${isUsingNube && user && user.uid !== 'local_user' ? 'bg-indigo-900 text-indigo-100' : 'bg-gray-700 text-gray-200'}`}>
+                {isUsingNube && user && user.uid !== 'local_user' ? '● En la Nube' : '● Local'}
+              </span>
+
+              <span className={`text-[10px] px-2.5 py-1 rounded-full font-black uppercase tracking-wider transition-colors ${onlineStatus ? 'bg-green-600 text-green-50' : 'bg-amber-600 text-amber-50 animate-pulse'}`}>
+                {onlineStatus ? 'Conectado' : 'Offline'}
+              </span>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2.5">
+              <div className="flex items-center bg-blue-900/90 rounded-xl px-3 py-2 border border-blue-700/60 shadow-inner">
+                <Icons.Users />
+                <select 
+                  value={selectedTeamId} 
+                  onChange={(e) => setSelectedTeamId(e.target.value)}
+                  className="bg-transparent text-xs font-black focus:outline-none appearance-none pr-5 ml-2 cursor-pointer border-none text-white"
+                >
+                  <option value="" disabled className="text-black">Seleccionar Equipo</option>
+                  {teams.map(t => <option key={t.id} value={t.id} className="text-black">{t.name}</option>)}
+                </select>
+              </div>
+
+              <div className="flex items-center bg-blue-900/90 rounded-xl px-3 py-2 border border-blue-700/60 shadow-inner">
+                <Icons.Trophy />
+                <select 
+                  value={selectedSeasonId} 
+                  onChange={(e) => setSelectedSeasonId(e.target.value)}
+                  className="bg-transparent text-xs font-black focus:outline-none appearance-none pr-5 ml-2 cursor-pointer border-none text-white"
+                  disabled={!selectedTeamId}
+                >
+                  <option value="" disabled className="text-black">Temporada</option>
+                  {seasons.map(s => <option key={s.id} value={s.id} className="text-black">{s.name}</option>)}
+                </select>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2.5 self-start lg:self-auto">
+              <button 
+                onClick={() => { setActiveTab('stats'); setShowConfig(false); }} 
+                className={`px-4 py-2.5 rounded-xl text-xs font-black tracking-wide uppercase transition-all active:scale-95 cursor-pointer ${activeTab === 'stats' ? 'bg-blue-600 text-white shadow-md border border-blue-500' : 'hover:bg-blue-900 text-gray-300 bg-transparent'}`}
+              >
+                Estadísticas
+              </button>
+              <button 
+                onClick={() => { setActiveTab('matches'); setShowConfig(false); }} 
+                className={`px-4 py-2.5 rounded-xl text-xs font-black tracking-wide uppercase transition-all active:scale-95 cursor-pointer ${activeTab === 'matches' ? 'bg-blue-600 text-white shadow-md border border-blue-500' : 'hover:bg-blue-900 text-gray-300 bg-transparent'}`}
+              >
+                Partidos
+              </button>
+              <div className="w-px h-6 bg-blue-800 mx-1" />
+              <button 
+                onClick={() => setShowConfig(!showConfig)} 
+                className={`p-2.5 rounded-xl transition-all active:scale-95 cursor-pointer border flex items-center justify-center ${showConfig ? 'bg-yellow-500 border-yellow-400 text-blue-950' : 'bg-blue-900/50 border-blue-800 text-gray-300 hover:bg-blue-800'}`}
+              >
+                <Icons.Settings className="animate-spin-slow" />
+              </button>
+            </div>
+          </header>
+
+          <main className="max-w-7xl mx-auto p-4 md:p-6 w-full flex-grow relative z-10">
+            
+            {showConfig && (
+              <div className="mb-8 bg-white p-6 rounded-2xl shadow-xl border border-blue-100 animate-in fade-in duration-200 relative z-20 space-y-8">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                  <div>
+                    <h4 className="font-bold mb-4 flex items-center gap-2 text-blue-900"><Icons.Users /> Gestionar Equipos</h4>
+                    <div className="flex gap-2 mb-4">
+                      <input type="text" value={newTeamName} onChange={e => setNewTeamName(e.target.value)} placeholder="Nombre del equipo..." className="flex-1 p-2 border rounded-lg text-sm" />
+                      <button onClick={addTeam} className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-blue-700 transition">Añadir</button>
+                    </div>
+                    <div className="space-y-1 max-h-32 overflow-y-auto pr-2">
+                      {teams.map(t => (
+                        <div key={t.id} className="flex justify-between items-center p-2 bg-gray-50 rounded-lg text-sm">
+                          <span className={selectedTeamId === t.id ? 'font-bold text-blue-600' : ''}>{t.name}</span>
+                          <button onClick={() => deleteTeam(t.id)} className="text-red-400 hover:text-red-600"><Icons.Trash2 /></button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                  
+                  <div>
+                    <h4 className="font-bold mb-4 flex items-center gap-2 text-blue-900"><Icons.Trophy /> Gestionar Temporadas</h4>
+                    
+                    {teams.length > 0 ? (
+                      <div className="mb-4 p-3 bg-blue-50/50 rounded-xl border border-blue-100">
+                        <label className="text-[10px] font-black text-blue-900 uppercase tracking-wider block mb-1">
+                          Equipo para la Temporada:
+                        </label>
+                        <select 
+                          value={selectedTeamId} 
+                          onChange={(e) => setSelectedTeamId(e.target.value)}
+                          className="w-full p-2 border rounded-lg text-xs bg-white font-bold text-gray-700 focus:ring-2 focus:ring-blue-500 outline-none"
+                        >
+                          <option value="" disabled>-- Seleccioná un equipo --</option>
+                          {teams.map(t => <option key={t.id} value={t.id}>{t.name}</option>)}
+                        </select>
+                      </div>
+                    ) : (
+                      <div className="mb-4 p-3 bg-red-50 text-red-700 rounded-xl border border-red-100 text-xs font-bold">
+                        ⚠️ Primero creá un equipo a la izquierda antes de añadir temporadas.
+                      </div>
+                    )}
+
+                    <div className="flex gap-2 mb-4">
+                      <input 
+                        type="text" 
+                        value={newSeasonName} 
+                        onChange={e => setNewSeasonName(e.target.value)} 
+                        placeholder={selectedTeamId ? "Ej: Apertura 2026" : "Seleccioná un equipo arriba..."} 
+                        className="flex-1 p-2 border rounded-lg text-sm" 
+                        disabled={!selectedTeamId} 
+                      />
+                      <button 
+                        onClick={addSeason} 
+                        className="bg-blue-600 text-white px-4 py-2 rounded-lg text-sm font-bold hover:bg-blue-700 transition disabled:opacity-50" 
+                        disabled={!selectedTeamId}
+                      >
+                        Añadir
+                      </button>
+                    </div>
+                    <div className="space-y-1 max-h-32 overflow-y-auto pr-2">
+                      {seasons.map(s => (
+                        <div key={s.id} className="flex justify-between items-center p-2 bg-gray-50 rounded-lg text-sm">
+                          <span className={selectedSeasonId === s.id ? 'font-bold text-blue-600' : ''}>{s.name}</span>
+                          <button onClick={() => deleteSeason(s.id)} className="text-red-400 hover:text-red-600"><Icons.Trash2 /></button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+
+                <button onClick={() => setShowConfig(false)} className="mt-6 w-full py-2 text-gray-400 hover:text-gray-600 text-xs font-bold uppercase tracking-widest">Cerrar Ajustes</button>
+              </div>
+            )}
+
+            {!selectedTeamId || !selectedSeasonId ? (
+              <div className="text-center py-20 bg-white rounded-3xl border-2 border-dashed border-gray-200">
+                <div className="bg-blue-50 w-20 h-20 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <Icons.Settings className="text-blue-600 animate-pulse m-auto" />
+                </div>
+                <h2 className="text-2xl font-black text-gray-800">Hola Iván, configurá tu entorno</h2>
+                <p className="text-gray-500 mt-2">Creá tu primer equipo y una temporada para empezar. ¡Todo se guardará directamente en tu base de datos!</p>
+                <button onClick={() => setShowConfig(true)} className="mt-6 bg-blue-900 text-white px-8 py-3 rounded-xl font-bold hover:shadow-lg transition">Abrir Configuración</button>
+              </div>
+            ) : (
+              <>
+                {/* ESTADÍSTICAS */}
+                {activeTab === 'stats' && (
+                  <div className="space-y-8 animate-in fade-in duration-300 relative z-10">
+                    <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+                      <StatCard label="Partidos" value={matches.length} color="border-gray-400" />
+                      <StatCard label="Goles a Favor" value={collectiveKPIs.totalGoalsScored} color="border-green-500" highlight="text-green-600" />
+                      <StatCard label="Goles en Contra" value={collectiveKPIs.totalGoalsConceded} color="border-red-500" highlight="text-red-600" />
+                      <StatCard label="Vallas Invictas" value={`${collectiveKPIs.cleanSheets} (${collectiveKPIs.cleanSheetsPct})`} icon={<Icons.ShieldCheck />} color="border-blue-500" />
+                      <StatCard label="Racha s/Perder" value={`${collectiveKPIs.undefeatedStreak} PJ`} icon={<Icons.Sparkles />} color="border-yellow-500" />
+                    </div>
+
+                    {/* Campo Táctico */}
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100 grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
+                      <div className="lg:col-span-5 space-y-4">
+                        <div className="flex items-center gap-2">
+                          <Icons.Map />
+                          <h3 className="text-xl font-black tracking-tight text-blue-950">Mapa Táctico Colectivo</h3>
+                        </div>
+                        <p className="text-sm text-gray-500">Visualizá el origen de los goles de manera interactiva.</p>
+                        <div className="flex gap-2 bg-gray-100 p-1.5 rounded-xl">
+                          <button onClick={() => setTacticalView('offensive')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${tacticalView === 'offensive' ? 'bg-green-600 text-white shadow' : 'text-gray-600 hover:bg-gray-200'}`}>Nuestros Goles</button>
+                          <button onClick={() => setTacticalView('defensive')} className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${tacticalView === 'defensive' ? 'bg-red-600 text-white shadow' : 'text-gray-600 hover:bg-gray-200'}`}>Goles del Rival</button>
+                        </div>
+                        <div className="space-y-2 mt-4 text-xs">
+                          <h4 className="font-bold text-gray-700">Resumen de Fase:</h4>
+                          <div className="grid grid-cols-2 gap-2">
+                            {tacticalView === 'offensive' ? (
+                              <>
+                                <div className="p-2.5 bg-green-50/50 rounded-lg border border-green-100">
+                                  <span className="block font-black text-green-700 text-base">{offensiveTotals.reduce((a, b) => a + b.value, 0)}</span>
+                                  <span className="text-gray-500">Goles Analizados</span>
+                                </div>
+                                <div className="p-2.5 bg-blue-50/50 rounded-lg border border-blue-100">
+                                  <span className="block font-black text-blue-700 text-xs leading-tight">
+                                    {formatStatLabel(offensiveTotals.reduce((max, current) => current.value > max.value ? current : max, {name: '', value: -1}).name) || "Sin datos"}
+                                  </span>
+                                  <span className="text-gray-500">Más Efectivo</span>
+                                </div>
+                              </>
+                            ) : (
+                              <>
+                                <div className="p-2.5 bg-red-50/50 rounded-lg border border-red-100">
+                                  <span className="block font-black text-red-700 text-base">{defensiveTotals.reduce((a, b) => a + b.value, 0)}</span>
+                                  <span className="text-gray-500">Goles Concedidos</span>
+                                </div>
+                                <div className="p-2.5 bg-yellow-50/50 rounded-lg border border-yellow-100">
+                                  <span className="block font-black text-yellow-700 text-xs leading-tight">
+                                    {formatStatLabel(defensiveTotals.reduce((max, current) => current.value > max.value ? current : max, {name: '', value: -1}).name) || "Sin datos"}
+                                  </span>
+                                  <span className="text-gray-500">Mayor Falla</span>
+                                </div>
+                              </>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                      <div className="lg:col-span-7 flex justify-center">
+                        <TacticalField view={tacticalView} stats={tacticalView === 'offensive' ? offensiveTotals : defensiveTotals} />
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                      <h3 className="text-lg font-bold mb-6 flex items-center gap-2 text-gray-800"><Icons.Award /> Rendimiento por Localía</h3>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                        <LocationCard title="Rendimiento de Local" color="bg-emerald-50 border-emerald-200" textColor="text-emerald-800" data={locationAnalysis.Local} />
+                        <LocationCard title="Rendimiento de Visitante" color="bg-amber-50 border-amber-200" textColor="text-amber-800" data={locationAnalysis.Visitante} />
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                      <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+                        <h3 className="text-lg font-bold flex items-center gap-2 text-gray-800"><Icons.TrendingUp /> Rendimiento de la Temporada</h3>
+                        <div className="flex items-center gap-3 bg-gray-50 px-4 py-2 rounded-xl border text-xs font-bold">
+                          <span className="text-green-600">● {performanceData.filter(d => d.codigoRes === 'G').length} PG</span>
+                          <span className="text-gray-300">|</span>
+                          <span className="text-gray-500">● {performanceData.filter(d => d.codigoRes === 'E').length} PE</span>
+                          <span className="text-gray-300">|</span>
+                          <span className="text-red-500">● {performanceData.filter(d => d.codigoRes === 'P').length} PP</span>
+                        </div>
+                      </div>
+
+                      <div className="relative w-full h-80">
+                        <SafeResponsiveContainer height={320}>
+                          <AreaChart data={performanceData} margin={{ top: 20, right: 15, left: -20, bottom: 20 }}>
+                            <defs>
+                              <linearGradient id="colorFav" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#10b981" stopOpacity={0.2}/>
+                                <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
+                              </linearGradient>
+                              <linearGradient id="colorContra" x1="0" y1="0" x2="0" y2="1">
+                                <stop offset="5%" stopColor="#ef4444" stopOpacity={0.1}/>
+                                <stop offset="95%" stopColor="#ef4444" stopOpacity={0}/>
+                              </linearGradient>
+                            </defs>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 10, fontWeight: 'bold'}} />
+                            <YAxis axisLine={false} tickLine={false} />
+                            <Tooltip content={<CustomChartTooltip />} />
+                            <Legend iconType="circle" />
+                            <Area type="monotone" dataKey="goles" stroke="#10b981" fill="url(#colorFav)" name="Goles de Iván PRO" strokeWidth={3} isAnimationActive={false} dot={(props) => {
+                              const { cx, cy, payload } = props;
+                              if (!cx || !cy) return null;
+                              let color = payload.codigoRes === 'G' ? '#10b981' : payload.codigoRes === 'P' ? '#ef4444' : '#9ca3af';
+                              return <circle key={`dot-goles-${payload.name}-${cx}`} cx={cx} cy={cy} r={7} fill={color} stroke="#fff" strokeWidth={2} />;
+                            }} />
+                            <Area type="monotone" dataKey="recibidos" stroke="#ef4444" fill="url(#colorContra)" name="Goles de Rivales" strokeWidth={3} isAnimationActive={false} dot={(props) => {
+                              const { cx, cy, payload } = props;
+                              if (!cx || !cy) return null;
+                              return <circle key={`dot-rec-${payload.name}`} cx={cx} cy={cy} r={5} fill="#fca5a5" stroke="#ef4444" strokeWidth={1.5} />;
+                            }} />
+                          </AreaChart>
+                        </SafeResponsiveContainer>
+                      </div>
+                    </div>
+
+                    <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                      <h3 className="text-lg font-bold text-gray-800 flex items-center gap-2"><Icons.Calendar /> Periodización</h3>
+                      <div className="relative w-full h-72 mt-6">
+                        <SafeResponsiveContainer height={280}>
+                          <BarChart data={intervalTotals}>
+                            <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f0f0f0" />
+                            <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{fontSize: 11, fontWeight: 'bold'}} />
+                            <YAxis axisLine={false} tickLine={false} />
+                            <Tooltip />
+                            <Legend iconType="circle" />
+                            <Bar dataKey="favor" fill="#10b981" name="Goles a Favor" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                            <Bar dataKey="contra" fill="#ef4444" name="Goles en Contra" radius={[4, 4, 0, 0]} isAnimationActive={false} />
+                          </BarChart>
+                        </SafeResponsiveContainer>
+                      </div>
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                      <ChartSection title="Análisis Ofensivo" data={offensiveTotals} type="bar" color="#10b981" icon={<Icons.Target />} />
+                      <ChartSection title="Distribución Ofensiva %" data={offensiveTotals} type="pie" icon={<Icons.Target />} />
+                    </div>
+
+                    <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+                      <ChartSection title="Vulnerabilidad Defensiva" data={defensiveTotals} type="bar" color="#ef4444" icon={<Icons.ShieldAlert />} />
+                      <ChartSection title="Distribución Defensiva %" data={defensiveTotals} type="pie" icon={<Icons.ShieldAlert />} />
+                    </div>
+                  </div>
+                )}
+
+                {activeTab === 'matches' && (
+                  <div className="grid grid-cols-1 lg:grid-cols-3 gap-8 animate-in fade-in duration-300 relative z-10">
+                    <div className="lg:col-span-1">
+                      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-200">
+                        <h3 className="text-lg font-bold mb-6 flex items-center gap-2"><Icons.Plus /> Nuevo Partido</h3>
+                        <div className="space-y-4">
+                          <div>
+                            <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Rival</label>
+                            <input type="text" value={newMatch.opponent} onChange={e => handleMatchChange('main', 'opponent', e.target.value)} className="w-full p-2.5 bg-gray-50 border rounded-xl animate-none focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Rival..." />
+                          </div>
+                          <div className="grid grid-cols-2 gap-3">
+                            <div>
+                              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Fecha</label>
+                              <input type="date" value={newMatch.date} onChange={e => handleMatchChange('main', 'date', e.target.value)} className="w-full p-2 bg-gray-50 border rounded-xl text-xs" />
+                            </div>
+                            <div>
+                              <label className="text-[10px] font-bold text-gray-400 uppercase tracking-wider block mb-1">Condición</label>
+                              <select value={newMatch.location} onChange={e => handleMatchChange('main', 'location', e.target.value)} className="w-full p-2 bg-gray-50 border rounded-xl text-xs">
+                                <option>Local</option>
+                                <option>Visitante</option>
+                              </select>
+                            </div>
+                          </div>
+
+                          <div className="bg-blue-50 p-4 rounded-2xl border border-blue-100 text-center">
+                            <span className="text-[10px] font-black text-blue-900 uppercase block mb-2">Marcador</span>
+                            <div className="flex items-center justify-center gap-4">
+                              <div>
+                                <span className="text-[10px] text-gray-400 font-bold block mb-1">Nosotros</span>
+                                <div className="flex items-center gap-1">
+                                  <button onClick={() => handleIncrement('main', 'ourGoals', -1)} className="w-6 h-6 bg-white border rounded font-bold">-</button>
+                                  <span className="w-6 font-black">{newMatch.ourGoals}</span>
+                                  <button onClick={() => handleIncrement('main', 'ourGoals', 1)} className="w-6 h-6 bg-white border rounded font-bold">+</button>
+                                </div>
+                              </div>
+                              <span className="font-bold text-blue-300">-</span>
+                              <div>
+                                <span className="text-[10px] text-gray-400 font-bold block mb-1">Rival</span>
+                                <div className="flex items-center gap-1">
+                                  <button onClick={() => handleIncrement('main', 'opponentGoals', -1)} className="w-6 h-6 bg-white border rounded font-bold">-</button>
+                                  <span className="w-6 font-black">{newMatch.opponentGoals}</span>
+                                  <button onClick={() => handleIncrement('main', 'opponentGoals', 1)} className="w-6 h-6 bg-white border rounded font-bold">+</button>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+
+                          <CollapsibleSection title="Cómo los hicimos (Nuestros Goles)" color="green" icon={<Icons.Target />}>
+                            {Object.keys(newMatch.offensive).map(key => (
+                              <StatInput key={key} label={formatStatLabel(key)} value={newMatch.offensive[key]} onIncrement={(amount) => handleIncrement('offensive', key, amount)} />
+                            ))}
+                          </CollapsibleSection>
+
+                          <CollapsibleSection title="Minutos de Nuestros Goles" color="green" icon={<Icons.Calendar />}>
+                            {Object.keys(newMatch.intervalsOffensive).map(key => (
+                              <StatInput key={key} label={formatIntervalLabel(key)} value={newMatch.intervalsOffensive[key]} onIncrement={(amount) => handleIncrement('intervalsOffensive', key, amount)} />
+                            ))}
+                          </CollapsibleSection>
+
+                          <CollapsibleSection title="Cómo nos los hicieron" color="red" icon={<Icons.ShieldAlert />}>
+                            {Object.keys(newMatch.defensive).map(key => (
+                              <StatInput key={key} label={formatStatLabel(key)} value={newMatch.defensive[key]} onIncrement={(amount) => handleIncrement('defensive', key, amount)} />
+                            ))}
+                          </CollapsibleSection>
+
+                          <CollapsibleSection title="Minutos de Goles del Rival" color="red" icon={<Icons.ShieldAlert />}>
+                            {Object.keys(newMatch.intervalsDefensive).map(key => (
+                              <StatInput key={key} label={formatIntervalLabel(key)} value={newMatch.intervalsDefensive[key]} onIncrement={(amount) => handleIncrement('intervalsDefensive', key, amount)} />
+                            ))}
+                          </CollapsibleSection>
+
+                          <button onClick={saveMatch} className="w-full bg-blue-900 text-white font-bold py-3.5 rounded-xl hover:bg-blue-800 transition shadow-lg flex items-center justify-center gap-2"><Icons.Save /> Guardar Partido</button>
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="lg:col-span-2 space-y-4">
+                      <h3 className="text-xl font-bold px-2">Historial de Partidos ({matches.length})</h3>
+                      {matches.length === 0 ? (
+                        <div className="bg-white py-20 rounded-3xl text-center border-2 border-dashed border-gray-200">Sin partidos registrados.</div>
+                      ) : (
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                          {[...matches].sort((a,b) => new Date(b.date) - new Date(a.date)).map(m => (
+                            <div key={m.id} className="bg-white p-5 rounded-2xl shadow-sm border border-gray-100 relative group overflow-hidden transition-all hover:shadow-md">
+                              <div className={`absolute top-0 left-0 w-2 h-full ${m.ourGoals > m.opponentGoals ? 'bg-green-500' : m.ourGoals === m.opponentGoals ? 'bg-gray-400' : 'bg-red-500'}`} />
+                              <div className="flex justify-between text-[10px] font-black text-gray-300 uppercase mb-3"><span>{m.date}</span><span>{m.location}</span></div>
+                              <div className="flex items-center justify-between">
+                                <div className="text-center flex-1 truncate px-2"><p className="text-xs text-gray-400 mb-1">Nosotros</p><p className="text-2xl font-black">{m.ourGoals}</p></div>
+                                <div className="font-bold text-xs px-2.5 py-1 bg-gray-100 rounded-full select-none text-gray-600">
+                                  {m.ourGoals > m.opponentGoals ? 'GANADO' : m.ourGoals === m.opponentGoals ? 'EMPATE' : 'PERDIDO'}
+                                </div>
+                                <div className="text-center flex-1 truncate px-2"><p className="text-xs text-gray-400 mb-1 truncate">{m.opponent}</p><p className="text-2xl font-black">{m.opponentGoals}</p></div>
+                              </div>
+                              <button onClick={() => deleteMatch(m.id)} className="absolute top-2 right-2 text-gray-300 hover:text-red-500 transition-colors"><Icons.Trash2 /></button>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </>
+            )}
+          </main>
+        </div>
+      );
+    };
+
+    const StatCard = ({ label, value, color, highlight = "text-gray-800", icon = null }) => (
+      <div className={`bg-white p-5 rounded-2xl shadow-sm border-b-4 ${color}`}>
+        <p className="text-[10px] font-bold text-gray-400 uppercase tracking-widest flex items-center">{icon}{label}</p>
+        <p className={`text-2xl font-black mt-1 ${highlight}`}>{value}</p>
+      </div>
+    );
+
+    const CustomChartTooltip = ({ active, payload }) => {
+      if (active && payload && payload.length) {
+        const data = payload[0].payload;
+        let badgeColor = "bg-gray-100 text-gray-800";
+        if (data.codigoRes === 'G') badgeColor = "bg-emerald-100 text-emerald-800";
+        if (data.codigoRes === 'P') badgeColor = "bg-red-100 text-red-800";
+        
+        return (
+          <div className="bg-white p-4 rounded-xl shadow-xl border border-gray-100 text-xs">
+            <div className="flex items-center justify-between gap-3 mb-2 pb-1 border-b">
+              <span className="font-bold text-gray-800">{data.name} ({data.fullDate})</span>
+              <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase ${badgeColor}`}>
+                {data.resultado}
+              </span>
+            </div>
+            <p className="text-gray-500 mb-1">Rival: <span className="font-bold text-gray-800">{data.opponent}</span></p>
+            <div className="flex gap-4 mt-2 pt-1 font-bold">
+              <span className="text-emerald-600">Nosotros: {data.goles}</span>
+              <span className="text-red-500">Rival: {data.recibidos}</span>
+            </div>
+          </div>
+        );
+      }
+      return null;
+    };
+
+    const LocationCard = ({ title, color, textColor, data }) => {
+      const effectiveness = data.matches > 0 ? Math.round((data.wins / data.matches) * 100) : 0;
+      return (
+        <div className={`p-5 rounded-2xl border ${color}`}>
+          <h4 className={`font-black text-sm uppercase tracking-wide mb-3 ${textColor}`}>{title}</h4>
+          <div className="grid grid-cols-3 gap-2 text-center">
+            <div className="bg-white/60 rounded-xl p-2">
+              <span className="block text-[10px] text-gray-400 font-bold uppercase">Partidos</span>
+              <span className="text-lg font-black">{data.matches}</span>
+            </div>
+            <div className="bg-white/60 rounded-xl p-2">
+              <span className="block text-[10px] text-gray-400 font-bold uppercase">Balance</span>
+              <span className="text-xs font-black text-gray-700">{data.wins}V - {data.draws}E - {data.losses}D</span>
+            </div>
+            <div className="bg-white/60 rounded-xl p-2">
+              <span className="block text-[10px] text-gray-400 font-bold uppercase">Goles</span>
+              <span className="text-xs font-black text-gray-700">{data.goalsFor}F / {data.goalsAgainst}C</span>
+            </div>
+          </div>
+          <div className="mt-3 flex items-center justify-between text-xs font-bold text-gray-600">
+            <span>Efectividad (Ganados)</span>
+            <span className={textColor}>{effectiveness}%</span>
+          </div>
+          <div className="w-full bg-gray-200/50 rounded-full h-2 mt-1">
+            <div className={`h-2 rounded-full ${textColor.replace('text', 'bg')}`} style={{ width: `${effectiveness}%` }}></div>
+          </div>
+        </div>
+      );
+    };
+
+    const TacticalField = ({ view, stats }) => {
+      const getMappedValue = (key) => {
+        const item = stats.find(s => s.name === key);
+        return item ? item.value : 0;
+      };
+
+      const cRight = getMappedValue('Combinación por derecha');
+      const cLeft = getMappedValue('Combinación por izquierda');
+      const cCenterRight = getMappedValue('Centro Der.');
+      const cCenterLeft = getMappedValue('Centro Izq.');
+      const cCenterCross = getMappedValue('Combinación por carril central');
+      const direct = getMappedValue('Ataque Directo');
+      const counter = getMappedValue('Contraataque');
+      
+      const abpPenal = getMappedValue('ABP Penal');
+      const abpTiroLibre = getMappedValue('ABP Tiro Libre Directo');
+      const abpP1 = getMappedValue('ABP al Primer Palo');
+      const abpP2 = getMappedValue('ABP al Segundo Palo');
+
+      const total = cRight + cLeft + cCenterRight + cCenterLeft + cCenterCross + direct + counter + abpPenal + abpTiroLibre + abpP1 + abpP2;
+
+      const getIntensityColor = (value) => {
+        if (total === 0 || value === 0) return 'rgba(255, 255, 255, 0.08)';
+        const pct = value / total;
+        const baseColor = view === 'offensive' ? '34, 197, 94' : '239, 68, 68';
+        if (pct > 0.4) return `rgba(${baseColor}, 0.75)`;
+        if (pct > 0.2) return `rgba(${baseColor}, 0.5)`;
+        if (pct > 0.05) return `rgba(${baseColor}, 0.25)`;
+        return `rgba(${baseColor}, 0.12)`;
+      };
+
+      return (
+        <div className="relative w-full max-w-[400px] aspect-[4/5] bg-emerald-800 rounded-2xl border-4 border-emerald-900 p-2 shadow-inner overflow-hidden select-none">
+          <svg className="absolute inset-0 w-full h-full opacity-35 pointer-events-none" viewBox="0 0 100 120" fill="none">
+            <rect x="2" y="2" width="96" height="116" stroke="white" strokeWidth="1" />
+            <line x1="2" y1="60" x2="98" y2="60" stroke="white" strokeWidth="1" />
+            <circle cx="50" cy="60" r="15" stroke="white" strokeWidth="1" />
+            <rect x="25" y="2" width="50" height="20" stroke="white" strokeWidth="1" />
+            <rect x="35" y="2" width="30" height="6" stroke="white" strokeWidth="1" />
+            <circle cx="50" cy="14" r="1.2" fill="white" />
+            <path d="M 35,22 A 15,15 0 0,0 65,22" stroke="white" strokeWidth="1" fill="none" />
+            <rect x="25" y="98" width="50" height="20" stroke="white" strokeWidth="1" />
+            <rect x="35" y="112" width="30" height="6" stroke="white" strokeWidth="1" />
+            <circle cx="50" cy="106" r="1.2" fill="white" />
+            <path d="M 35,98 A 15,15 0 0,1 65,98" stroke="white" strokeWidth="1" fill="none" />
+          </svg>
+
+          <div className="absolute inset-0 text-white font-sans pointer-events-auto">
+            <div style={{ position: 'absolute', top: '2%', left: '2%', width: '22%', height: '20%', backgroundColor: getIntensityColor(cCenterLeft) }} className="rounded-xl flex flex-col justify-center items-center border border-white/5 transition-all cursor-help shadow-sm">
+              <span className="text-[7.5px] font-black text-white/90 text-center leading-none">CENTRO<br/>IZQ</span>
+              <span className="text-[9.5px] font-black text-white bg-black/45 px-1.5 py-0.2 rounded mt-1">{cCenterLeft}</span>
+            </div>
+            <div style={{ position: 'absolute', top: '2%', left: '76%', width: '22%', height: '20%', backgroundColor: getIntensityColor(cCenterRight) }} className="rounded-xl flex flex-col justify-center items-center border border-white/5 transition-all cursor-help shadow-sm">
+              <span className="text-[7.5px] font-black text-white/90 text-center leading-none">CENTRO<br/>DER</span>
+              <span className="text-[9.5px] font-black text-white bg-black/45 px-1.5 py-0.2 rounded mt-1">{cCenterRight}</span>
+            </div>
+            <div style={{ position: 'absolute', top: '24%', left: '2%', width: '22%', height: '24%', backgroundColor: getIntensityColor(cLeft) }} className="rounded-xl flex flex-col justify-center items-center border border-white/5 transition-all cursor-help shadow-sm">
+              <span className="text-[7.5px] font-black text-white/90 text-center leading-none">COMB.<br/>IZQ</span>
+              <span className="text-[9.5px] font-black text-white bg-black/45 px-1.5 py-0.2 rounded mt-1">{cLeft}</span>
+            </div>
+            <div style={{ position: 'absolute', top: '24%', left: '76%', width: '22%', height: '24%', backgroundColor: getIntensityColor(cRight) }} className="rounded-xl flex flex-col justify-center items-center border border-white/5 transition-all cursor-help shadow-sm">
+              <span className="text-[7.5px] font-black text-white/90 text-center leading-none">COMB.<br/>DER</span>
+              <span className="text-[9.5px] font-black text-white bg-black/45 px-1.5 py-0.2 rounded mt-1">{cRight}</span>
+            </div>
+            <div style={{ position: 'absolute', top: '24%', left: '26%', width: '48%', height: '24%', backgroundColor: getIntensityColor(cCenterCross) }} className="rounded-xl flex flex-col justify-center items-center border border-white/5 transition-all cursor-help shadow-sm">
+              <span className="text-[8px] font-black text-white/90 text-center leading-none">COMBINACIÓN CENTRAL</span>
+              <span className="text-[10px] font-black text-white bg-black/45 px-2.5 py-0.5 rounded-full mt-1">{cCenterCross}</span>
+            </div>
+            <div style={{ position: 'absolute', top: '10%', left: '28%', width: '44%', height: '12%', backgroundColor: getIntensityColor(direct) }} className="rounded-xl flex flex-col justify-center items-center border border-white/5 transition-all cursor-help shadow-sm">
+              <span className="text-[8px] font-black text-white/90 text-center leading-none">AT. DIRECTO</span>
+              <span className="text-[10px] font-black text-white bg-black/45 px-1.5 py-0.2 rounded mt-1">{direct}</span>
+            </div>
+            <div style={{ position: 'absolute', top: '1%', left: '36%', width: '12%', height: '7%', backgroundColor: getIntensityColor(abpP1) }} className="rounded flex flex-col justify-center items-center border border-white/5 transition-all cursor-help shadow-md">
+              <span className="text-[6.5px] font-black text-white/90 leading-none">1º PALO</span>
+              <span className="text-[8px] font-black text-white bg-black/50 px-1 rounded mt-0.5">{abpP1}</span>
+            </div>
+            <div style={{ position: 'absolute', top: '1%', left: '52%', width: '12%', height: '7%', backgroundColor: getIntensityColor(abpP2) }} className="rounded flex flex-col justify-center items-center border border-white/5 transition-all cursor-help shadow-md">
+              <span className="text-[6.5px] font-black text-white/90 leading-none">2º PALO</span>
+              <span className="text-[8px] font-black text-white bg-black/50 px-1 rounded mt-0.5">{abpP2}</span>
+            </div>
+            <div style={{ position: 'absolute', top: '11%', left: '50%', transform: 'translate(-50%, -50%)', width: '32px', height: '32px', backgroundColor: getIntensityColor(abpPenal) }} className="rounded-full flex flex-col justify-center items-center border-2 border-white/30 transition-all cursor-help shadow-lg">
+              <span className="text-[6px] font-black text-white/90 leading-none">PENAL</span>
+              <span className="text-[8px] font-black text-white leading-none mt-0.5">{abpPenal}</span>
+            </div>
+            <div style={{ position: 'absolute', top: '18.5%', left: '25%', width: '50%', height: '4%', backgroundColor: getIntensityColor(abpTiroLibre) }} className="rounded border border-amber-400/30 transition-all cursor-help flex items-center justify-between px-3 shadow-md">
+              <span className="text-[7.5px] font-black text-amber-300 leading-none">TIRO LIBRE DIRECTO</span>
+              <span className="text-[9px] font-black text-white bg-black/60 px-1.5 rounded">{abpTiroLibre}</span>
+            </div>
+            <div style={{ position: 'absolute', top: '52%', left: '26%', width: '48%', height: '18%', backgroundColor: getIntensityColor(counter) }} className="rounded-xl flex flex-col justify-center items-center border border-white/5 transition-all cursor-help shadow-sm">
+              <span className="text-[8px] font-black text-white/90 drop-shadow text-center leading-none">CONTRAATAQUE</span>
+              <span className="text-[10px] font-black text-white bg-black/45 px-2.5 py-0.5 rounded-full mt-1">{counter}</span>
+            </div>
+          </div>
+        </div>
+      );
+    };
+
+    const ChartSection = ({ title, data, type, color, icon }) => (
+      <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+        <h4 className="font-bold mb-6 flex items-center gap-2 text-gray-700">{icon} {title}</h4>
+        <div className="relative w-full h-72">
+          <SafeResponsiveContainer height={288}>
+            {type === 'bar' ? (
+              <BarChart data={data} layout="vertical" margin={{ top: 5, right: 10, left: 30, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#f0f0f0" />
+                <XAxis type="number" axisLine={false} tickLine={false} />
+                <YAxis dataKey="name" type="category" width={110} tick={{fontSize: 9, fontStyle: 'normal'}} axisLine={false} tickLine={false} />
+                <Tooltip cursor={{fill: '#f9fafb'}} contentStyle={{borderRadius: '8px'}} />
+                <Bar dataKey="value" fill={color} radius={[0, 4, 4, 0]} isAnimationActive={false} />
+              </BarChart>
+            ) : (
+              <PieChart margin={{ top: 25, bottom: 25, left: 25, right: 25 }}>
+                <Pie 
+                  data={data.filter(d => d.value > 0)} 
+                  cx="50%" cy="50%" 
+                  innerRadius={42} outerRadius={62} 
+                  paddingAngle={3} dataKey="value" 
+                  isAnimationActive={false} labelLine={true} 
+                  label={({percent}) => `${(percent * 100).toFixed(0)}%`}
+                >
+                  {data.map((entry, index) => <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />)}
+                </Pie>
+                <Tooltip />
+                <Legend verticalAlign="bottom" align="center" wrapperStyle={{fontSize: '9px', paddingTop: '15px'}} />
+              </PieChart>
+            )}
+          </SafeResponsiveContainer>
+        </div>
+      </div>
+    );
+
+    const CollapsibleSection = ({ title, color, children, icon }) => {
+      const [open, setOpen] = useState(false);
+      const colorMap = { 
+        green: 'bg-green-50 text-green-800 border-green-100', 
+        red: 'bg-red-50 text-red-800 border-red-100' 
+      };
+      return (
+        <div className={`${colorMap[color]} rounded-xl overflow-hidden border`}>
+          <button type="button" onClick={() => setOpen(!open)} className="w-full flex justify-between items-center p-3 font-bold text-xs uppercase tracking-wide">
+            <span className="flex items-center gap-2">{icon} {title}</span>
+            <Icons.ChevronDown className={`transition-transform ${open ? 'rotate-180' : ''}`} />
+          </button>
+          {open && <div className="p-3 pt-0 space-y-2">{children}</div>}
+        </div>
+      );
+    };
+
+    const StatInput = ({ label, value, onIncrement }) => (
+      <div className="flex justify-between items-center bg-white/50 p-2.5 rounded-xl border border-white/20">
+        <span className="text-[10px] font-bold text-gray-600 uppercase leading-tight mr-2">{label}</span>
+        <div className="flex items-center gap-1.5">
+          <button type="button" onClick={() => onIncrement(-1)} className="w-7 h-7 flex items-center justify-center bg-gray-100 rounded-lg text-gray-500 font-bold hover:bg-gray-200 transition active:scale-95">-</button>
+          <span className="w-8 text-center text-xs font-black">{value}</span>
+          <button type="button" onClick={() => onIncrement(1)} className="w-7 h-7 flex items-center justify-center bg-gray-100 rounded-lg text-gray-500 font-bold hover:bg-gray-200 transition active:scale-95">+</button>
+        </div>
+      </div>
+    );
+
+    const formatStatLabel = (key) => {
+      const labels = {
+        combinativeRight: 'Combinación por derecha', combinativeLeft: 'Combinación por izquierda',
+        combinativeCenterRight: 'Centro Der.', combinativeCenterLeft: 'Centro Izq.',
+        combinativeCenterCross: 'Combinación por carril central', directAttack: 'Ataque Directo',
+        counterAttack: 'Contraataque', abpPenal: 'ABP Penal', abpTiroLibreDirecto: 'ABP Tiro Libre Directo',
+        abpPrimerPalo: 'ABP al Primer Palo', abpSegundoPalo: 'ABP al Segundo Palo'
+      };
+      return labels[key] || key;
+    };
+
+    const formatIntervalLabel = (key) => {
+      const labels = {
+        t1: "1' a 15'", t2: "16' a 30'", t3: "31' a 45'", t4: "46' a 60'", t5: "61' a 75'", t6: "76' a 90+'"
+      };
+      return labels[key] || key;
+    };
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
