@@ -255,7 +255,7 @@
         if (!user) return;
 
         if (isUsingNube && dbInstance && user.uid !== 'local_user') {
-          const teamsRef = dbInstance.collection('artifacts').doc(appId).collection('users').doc(user.uid).collection('teams');
+          const teamsRef = dbInstance.collection('artifacts').doc(appId).collection('teams');
           return teamsRef.onSnapshot((snapshot) => {
             const teamsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
             setTeams(teamsData);
