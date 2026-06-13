@@ -250,27 +250,34 @@
         };
       }, [isUsingNube]);
 
-      // Carga de Equipos
-      useEffect(() => {
-        if (!user) return;
+      // Carga de Equipos (Corregido y Sincronizado)
+useEffect(() => {
+  // Si no está activa la nube o no hay base de datos, va directo a local
+  if (!isUsingNube || !dbInstance) {
+    const localTeams = JSON.parse(localStorage.getItem('ivan_pro_teams') || '[]');
+    setTeams(localTeams);
+    if (localTeams.length > 0 && !selectedTeamId) setSelectedTeamId(localTeams[0].id);
+    return;
+  }
 
-        if (isUsingNube && dbInstance && user.uid !== 'local_user') {
-          const teamsRef = dbInstance.collection('artifacts').doc(appId).collection('teams');
-          return teamsRef.onSnapshot((snapshot) => {
-            const teamsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-            setTeams(teamsData);
-            if (teamsData.length > 0 && !selectedTeamId) setSelectedTeamId(teamsData[0].id);
-          }, (err) => {
-            const localTeams = JSON.parse(localStorage.getItem('ivan_pro_teams') || '[]');
-            setTeams(localTeams);
-            if (localTeams.length > 0 && !selectedTeamId) setSelectedTeamId(localTeams[0].id);
-          });
-        } else {
-          const localTeams = JSON.parse(localStorage.getItem('ivan_pro_teams') || '[]');
-          setTeams(localTeams);
-          if (localTeams.length > 0 && !selectedTeamId) setSelectedTeamId(localTeams[0].id);
-        }
-      }, [user, isUsingNube]);
+  // Usamos una ruta fija ("gestion_ivan/datos/teams") para que celu y compu vayan al mismo lugar exacto
+  const teamsRef = dbInstance.collection('gestion_ivan').doc('datos').collection('teams');
+
+  // El onSnapshot escucha en tiempo real. Si cambia en el celu, se actualiza en la compu al toque
+  const unsubscribe = teamsRef.onSnapshot((snapshot) => {
+    const teamsData = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    setTeams(teamsData);
+    if (teamsData.length > 0 && !selectedTeamId) setSelectedTeamId(teamsData[0].id);
+  }, (err) => {
+    console.error("Error en la nube, pasando a modo local:", err);
+    const localTeams = JSON.parse(localStorage.getItem('ivan_pro_teams') || '[]');
+    setTeams(localTeams);
+    if (localTeams.length > 0 && !selectedTeamId) setSelectedTeamId(localTeams[0].id);
+  });
+
+  return () => unsubscribe();
+}, [isUsingNube, dbInstance]);
+      
 
       // Carga de Temporadas
       useEffect(() => {
